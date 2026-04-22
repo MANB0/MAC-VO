@@ -1,6 +1,5 @@
 import argparse
 import torch
-import rerun as rr
 import numpy as np
 import pypose as pp
 from pathlib import Path
@@ -17,7 +16,7 @@ from Utility.Timer import Timer
 
 
 def VisualizeRerunCallback(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
-    rr.set_time_sequence("frame_idx", frame.frame_idx)
+    rr_plt.set_time_sequence("frame_idx", frame.frame_idx)
     
     # Non-key frame does not need visualization
     if system.graph.frames.data["need_interp"][-1]: return
@@ -46,8 +45,8 @@ def VisualizeVRAMUsage(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--odom", type=str, default = "Config/Experiment/MACVO/MACVO.yaml")
-    parser.add_argument("--data", type=str, default = "Config/Sequence/TartanAir_abandonfac_001.yaml")
+    parser.add_argument("--odom", type=str, default = "Config/Experiment/MACVO/MACVO_Fast.yaml")
+    parser.add_argument("--data", type=str, default = "Config/Sequence/rov.yaml")
     parser.add_argument(
         "--seq_to",
         type=int,
@@ -68,8 +67,9 @@ def get_args():
     )
     parser.add_argument(
         "--useRR",
+        default=True,
         action="store_true",
-        help="Activate RerunVisualizer to generate <config.Project>.rrd file for visualization.",
+        help="Activate live Rerun visualization and save a compact rerun.rrd into the result sandbox.",
     )
     parser.add_argument(
         "--saveplt",
@@ -88,6 +88,7 @@ def get_args():
     )
     parser.add_argument(
         "--noeval", 
+        default=True,
         action="store_true",
         help="Evaluate sequence after running odometry."
     )
@@ -116,43 +117,49 @@ if __name__ == "__main__":
         "Data": {"args": datacfg_dict, "end_idx": args.seq_to, "start_idx": args.seq_from},
     }
 
-    # Setup logging and visualization
-    if args.useRR:
-        rr_plt.default_mode = "rerun"
-        rr_plt.init_connect(project_name)
-    
-    Timer.setup(active=args.timing)
-    fig_plt.default_mode = "image" if args.saveplt else "none"
-
-    def onFrameFinished(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
-        VisualizeRerunCallback(frame, system, pb)
-        VisualizeVRAMUsage(frame, system, pb)
-
-    # Initialize data source
-    sequence = smart_transform(
-        SequenceBase[StereoFrame].instantiate(datacfg.type, datacfg.args).clip(args.seq_from, args.seq_to),
-        cfg.Preprocess
-    )
-    
-    if args.preload:
-        sequence = sequence.preload()
-    
-    system = MACVO[StereoFrame].from_config(asNamespace(exp_space.config))
-    system.receive_frames(sequence, exp_space, on_frame_finished=onFrameFinished)
-    
-    rr_plt.log_trajectory("/world/est"  , torch.tensor(np.load(exp_space.path("poses.npy"))[:, 1:]))
     try:
-        rr_plt.log_points    ("/world/point_cloud", 
-                                system.get_map().map_points.data["pos_Tw"].tensor,
-                                system.get_map().map_points.data["color"].tensor,
-                                system.get_map().map_points.data["cov_Tw"].tensor,
-                                "color")
-    except RuntimeError:
-        Logger.write("warn", "Unable to log full pointcloud - is mapping mode on?")
-    
-    Timer.report()
-    Timer.save_elapsed(exp_space.path("elapsed_time.json"))
+        # Setup logging and visualization
+        if args.useRR:
+            rr_plt.default_mode = "rerun"
+            rrd_path = exp_space.path("rerun.rrd")
+            exp_space.config["Rerun"] = {"rrd_path": str(rrd_path)}
+            rr_plt.init_connect(project_name, rrd_path)
+        
+        Timer.setup(active=args.timing)
+        fig_plt.default_mode = "image" if args.saveplt else "none"
 
-    if not args.noeval:
-        header, result = EvaluateSequences([str(exp_space.folder)], correct_scale=False)
-        print_as_table(header, result)
+        def onFrameFinished(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
+            VisualizeRerunCallback(frame, system, pb)
+            VisualizeVRAMUsage(frame, system, pb)
+
+        # Initialize data source
+        sequence = smart_transform(
+            SequenceBase[StereoFrame].instantiate(datacfg.type, datacfg.args).clip(args.seq_from, args.seq_to),
+            cfg.Preprocess
+        )
+        
+        if args.preload:
+            sequence = sequence.preload()
+        
+        system = MACVO[StereoFrame].from_config(asNamespace(exp_space.config))
+        system.receive_frames(sequence, exp_space, on_frame_finished=onFrameFinished)
+        
+        rr_plt.log_trajectory("/world/est"  , torch.tensor(np.load(exp_space.path("poses.npy"))[:, 1:]))
+        try:
+            rr_plt.log_points    ("/world/point_cloud", 
+                                    system.get_map().map_points.data["pos_Tw"].tensor,
+                                    system.get_map().map_points.data["color"].tensor,
+                                    system.get_map().map_points.data["cov_Tw"].tensor,
+                                    "color")
+        except RuntimeError:
+            Logger.write("warn", "Unable to log full pointcloud - is mapping mode on?")
+        
+        Timer.report()
+        Timer.save_elapsed(exp_space.path("elapsed_time.json"))
+
+        if not args.noeval:
+            header, result = EvaluateSequences([str(exp_space.folder)], correct_scale=False)
+            print_as_table(header, result)
+    finally:
+        if args.useRR:
+            rr_plt.shutdown()
