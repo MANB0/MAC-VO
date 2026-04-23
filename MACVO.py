@@ -32,6 +32,29 @@ def VisualizeRerunCallback(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
     
     vo_points  = system.graph.get_match2point(system.graph.get_frame2match(system.graph.frames[-1:]))
     rr_plt.log_points("/world/vo_tracking", vo_points.data["pos_Tw"], vo_points.data["color"], vo_points.data["cov_Tw"], "sphere")
+
+
+def VisualizeIMUData(frame: StereoFrame, system: MACVO):
+    if (not hasattr(frame, "imu")) or (getattr(frame, "imu") is None):
+        return
+
+    imu = frame.imu
+    if imu.time_ns.numel() == 0:
+        return
+
+    imu_time_ns = imu.time_ns.reshape(-1).detach().cpu().long()
+    imu_acc = imu.acc.reshape(-1, 3).detach().cpu().float()
+    imu_gyro = imu.gyro.reshape(-1, 3).detach().cpu().float()
+
+    # Log tri-axis IMU as time-series lines under two groups: /imu/acc/* and /imu/gyro/*
+    for i in range(imu_time_ns.numel()):
+        rr_plt.set_time_sequence("imu_ns", int(imu_time_ns[i].item()))
+        rr_plt.log_scalar("/imu/acc/x", float(imu_acc[i, 0].item()))
+        rr_plt.log_scalar("/imu/acc/y", float(imu_acc[i, 1].item()))
+        rr_plt.log_scalar("/imu/acc/z", float(imu_acc[i, 2].item()))
+        rr_plt.log_scalar("/imu/gyro/x", float(imu_gyro[i, 0].item()))
+        rr_plt.log_scalar("/imu/gyro/y", float(imu_gyro[i, 1].item()))
+        rr_plt.log_scalar("/imu/gyro/z", float(imu_gyro[i, 2].item()))
     
 
 def VisualizeVRAMUsage(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
@@ -46,7 +69,7 @@ def VisualizeVRAMUsage(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--odom", type=str, default = "Config/Experiment/MACVO/MACVO_Fast.yaml")
-    parser.add_argument("--data", type=str, default = "Config/Sequence/rov.yaml")
+    parser.add_argument("--data", type=str, default = "Config/Sequence/rov_stereo_imu.yaml")
     parser.add_argument(
         "--seq_to",
         type=int,
@@ -130,6 +153,7 @@ if __name__ == "__main__":
 
         def onFrameFinished(frame: StereoFrame, system: MACVO, pb: ColoredTqdm):
             VisualizeRerunCallback(frame, system, pb)
+            VisualizeIMUData(frame, system)
             VisualizeVRAMUsage(frame, system, pb)
 
         # Initialize data source

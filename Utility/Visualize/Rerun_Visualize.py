@@ -82,6 +82,30 @@ class Rerun_Visualizer:
             rr.log(entity_path, data, static=static, recording=recording)
 
     @staticmethod
+    def _send_default_blueprint() -> None:
+        assert rr is not None
+        import rerun.blueprint as rrb
+
+        # Keep existing 3D/map/camera views and provide two independent IMU line-chart panes.
+        bp = rrb.Blueprint(
+            rrb.Vertical(
+                rrb.Horizontal(
+                    rrb.Spatial3DView(origin="/world", name="World 3D"),
+                    rrb.Spatial2DView(origin="/world/macvo/cam_left", name="Camera"),
+                ),
+                rrb.Horizontal(
+                    rrb.TimeSeriesView(origin="/imu/acc", contents="$origin/**", name="IMU Acc"),
+                    rrb.TimeSeriesView(origin="/imu/gyro", contents="$origin/**", name="IMU Gyro"),
+                ),
+            ),
+            auto_views=False,
+            collapse_panels=False,
+        )
+
+        for recording in Rerun_Visualizer._iter_recordings():
+            rr.send_blueprint(bp, make_active=True, make_default=True, recording=recording)
+
+    @staticmethod
     def _start_managed_recorder(save_rrd: Path) -> None:
         rerun_cli = Rerun_Visualizer._find_rerun_cli()
         if rerun_cli is None:
@@ -199,6 +223,7 @@ class Rerun_Visualizer:
 
         Rerun_Visualizer._log("/", rr.ViewCoordinates(xyz=rr.ViewCoordinates.FRD), static=True)
         Rerun_Visualizer.active = True
+        Rerun_Visualizer._send_default_blueprint()
         if not Rerun_Visualizer.shutdown_registered:
             atexit.register(Rerun_Visualizer.shutdown)
             Rerun_Visualizer.shutdown_registered = True
@@ -352,3 +377,9 @@ class Rerun_Visualizer:
         if np_image.dtype != np.uint8:
             np_image = (np_image * 255).astype(np.uint8)
         Rerun_Visualizer._log(rerun_path, rr.Image(np_image).compress())
+
+    @register
+    @staticmethod
+    def log_scalar(rerun_path: str, value: float | int):
+        assert rr is not None
+        Rerun_Visualizer._log(rerun_path, rr.Scalar(float(value)))
